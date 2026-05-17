@@ -106,6 +106,7 @@ class InjectDefaultPrompt(DataTransformFn):
     prompt: str | None
 
     def __call__(self, data: DataDict) -> DataDict:
+        print("[Zazzle] src/openpi/transforms.py InjectDefaultPrompt")
         if self.prompt is not None and "prompt" not in data:
             data["prompt"] = np.asarray(self.prompt)
         return data
@@ -156,6 +157,7 @@ class Unnormalize(DataTransformFn):
             _assert_quantile_stats(self.norm_stats)
 
     def __call__(self, data: DataDict) -> DataDict:
+        print("[Zazzle] src/openpi/transforms.py Unnormalize")
         if self.norm_stats is None:
             return data
 
@@ -187,6 +189,7 @@ class ResizeImages(DataTransformFn):
     width: int
 
     def __call__(self, data: DataDict) -> DataDict:
+        print("[Zazzle] src/openpi/transforms.py ResizeImages")
         data["image"] = {k: image_tools.resize_with_pad(v, self.height, self.width) for k, v in data["image"].items()}
         return data
 
@@ -250,6 +253,7 @@ class TokenizePrompt(DataTransformFn):
     discrete_state_input: bool = False
 
     def __call__(self, data: DataDict) -> DataDict:
+        print("[Zazzle] src/openpi/transforms.py TokenizePrompt")
         if (prompt := data.pop("prompt", None)) is None:
             raise ValueError("Prompt is required")
 
@@ -331,6 +335,7 @@ class PadStatesAndActions(DataTransformFn):
     model_action_dim: int
 
     def __call__(self, data: DataDict) -> DataDict:
+        print("[Zazzle] src/openpi/transforms.py PadStatesAndActions")
         data["state"] = pad_to_dim(data["state"], self.model_action_dim, axis=-1)
         if "actions" in data:
             data["actions"] = pad_to_dim(data["actions"], self.model_action_dim, axis=-1)

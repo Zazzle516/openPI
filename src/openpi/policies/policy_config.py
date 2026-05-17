@@ -55,6 +55,8 @@ def create_trained_policy(
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
+
+    # LeRobotLiberoDataConfig().creat
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
     if norm_stats is None:
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
@@ -72,8 +74,10 @@ def create_trained_policy(
         except ImportError:
             pytorch_device = "cpu"
 
+    print("[Zazzle] src/openpi/policies/policy_config.py default_prompt: ", default_prompt)
     return _policy.Policy(
         model,
+        # Policy._input_transform
         transforms=[
             *repack_transforms.inputs,
             transforms.InjectDefaultPrompt(default_prompt),
@@ -81,6 +85,7 @@ def create_trained_policy(
             transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
             *data_config.model_transforms.inputs,
         ],
+        # Policy._output_transform
         output_transforms=[
             *data_config.model_transforms.outputs,
             transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),

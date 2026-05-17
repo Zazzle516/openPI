@@ -112,6 +112,7 @@ class ModelTransformFactory(GroupFactory):
 
     def __call__(self, model_config: _model.BaseModelConfig) -> _transforms.Group:
         match model_config.model_type:
+
             case _model.ModelType.PI0:
                 return _transforms.Group(
                     inputs=[
@@ -123,10 +124,14 @@ class ModelTransformFactory(GroupFactory):
                         _transforms.PadStatesAndActions(model_config.action_dim),
                     ],
                 )
+
+            # Pre-Processing Transformers for input data(PI05’s expected model input format)
             case _model.ModelType.PI05:
                 assert isinstance(model_config, pi0_config.Pi0Config)
+                # will be called in src/openpi/policies/policy_config.py
                 return _transforms.Group(
                     inputs=[
+                        # will skip during infer since prompt is already set by src/openpi/policies/policy_config.py
                         _transforms.InjectDefaultPrompt(self.default_prompt),
                         _transforms.ResizeImages(224, 224),
                         _transforms.TokenizePrompt(
@@ -136,6 +141,7 @@ class ModelTransformFactory(GroupFactory):
                         _transforms.PadStatesAndActions(model_config.action_dim),
                     ],
                 )
+
             case _model.ModelType.PI0_FAST:
                 tokenizer_cls = (
                     _tokenizer.FASTTokenizer
@@ -278,6 +284,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
         )
 
 
+# The data entry for both inference and training
 @dataclasses.dataclass(frozen=True)
 class LeRobotLiberoDataConfig(DataConfigFactory):
     """
@@ -290,6 +297,8 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        print("[Zazzle] src/openpi/training/config.py LeRobotLiberoDataConfig create")
+
         # The repack transform is *only* applied to the data coming from the dataset,
         # and *not* during inference. We can use it to make inputs from the dataset look
         # as close as possible to those coming from the inference environment (e.g. match the keys).
@@ -319,8 +328,8 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
         data_transforms = _transforms.Group(
-            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
-            outputs=[libero_policy.LiberoOutputs()],
+            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],    # How data process before enter model
+            outputs=[libero_policy.LiberoOutputs()],        # Q: 模型输出后怎么还原？
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -336,6 +345,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # LIBERO already represents actions as deltas, but we have some old Pi0 checkpoints that are trained with this
         # extra delta transform.
         if self.extra_delta_transform:
+            print("[Zazzle] check extra_delta_transform false")
             delta_action_mask = _transforms.make_bool_mask(6, -1)
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
@@ -558,9 +568,7 @@ class TrainConfig:
 
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
-    #
     # Inference Aloha configs.
-    #
     TrainConfig(
         name="pi0_aloha",
         model=pi0_config.Pi0Config(),
@@ -569,6 +577,7 @@ _CONFIGS = [
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
+
     TrainConfig(
         name="pi05_aloha",
         model=pi0_config.Pi0Config(pi05=True),
@@ -577,6 +586,7 @@ _CONFIGS = [
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
+
     TrainConfig(
         name="pi0_aloha_towel",
         model=pi0_config.Pi0Config(),
@@ -586,6 +596,7 @@ _CONFIGS = [
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
+
     TrainConfig(
         name="pi0_aloha_tupperware",
         model=pi0_config.Pi0Config(),
@@ -595,9 +606,8 @@ _CONFIGS = [
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
-    #
+
     # Inference DROID configs.
-    #
     TrainConfig(
         name="pi0_droid",
         model=pi0_config.Pi0Config(action_horizon=10),
@@ -612,6 +622,7 @@ _CONFIGS = [
             ),
         ),
     ),
+
     TrainConfig(
         name="pi0_fast_droid",
         model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
@@ -626,6 +637,7 @@ _CONFIGS = [
             ),
         ),
     ),
+
     TrainConfig(
         name="pi05_droid",
         model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
@@ -640,7 +652,7 @@ _CONFIGS = [
             ),
         ),
     ),
-    #
+
     # Fine-tuning Libero configs.
     #
     # These train configs define the hyperparameters for fine-tuning the base model on your own dataset.
@@ -675,6 +687,7 @@ _CONFIGS = [
         # Check the base TrainConfig class for a full list of available hyperparameters.
         num_train_steps=30_000,
     ),
+
     TrainConfig(
         name="pi0_libero_low_mem_finetune",
         # Here is an example of loading a pi0 model for LoRA fine-tuning.
@@ -696,6 +709,7 @@ _CONFIGS = [
         # Turn off EMA for LoRA finetuning.
         ema_decay=None,
     ),
+
     TrainConfig(
         name="pi0_fast_libero",
         # Here is an example of loading a pi0-FAST model for full finetuning.
@@ -718,6 +732,7 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
         num_train_steps=30_000,
     ),
+
     TrainConfig(
         name="pi0_fast_libero_low_mem_finetune",
         # Here is an example of loading a pi0-FAST model for LoRA finetuning.
@@ -740,9 +755,12 @@ _CONFIGS = [
         # Turn off EMA for LoRA finetuning.
         ema_decay=None,
     ),
+
     TrainConfig(
         name="pi05_libero",
+        # Set action chunk size to 10
         model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        # How to turn samples into PI05 model input
         data=LeRobotLiberoDataConfig(
             repo_id="physical-intelligence/libero",
             base_config=DataConfig(prompt_from_task=True),
@@ -761,7 +779,7 @@ _CONFIGS = [
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
     ),
-    #
+
     # Fine-tuning Aloha configs.
     #
     # This is a test config that is used to illustate how train on a custom LeRobot dataset.
@@ -795,6 +813,7 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=20_000,
     ),
+
     TrainConfig(
         name="pi05_aloha_pen_uncap",
         model=pi0_config.Pi0Config(pi05=True),
@@ -825,9 +844,8 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=64,
     ),
-    #
+
     # Fine-tuning DROID configs.
-    #
     TrainConfig(
         # This config is for fine-tuning pi0-FAST-base on the *full* DROID dataset.
         # We use RLDS data loading to make training on this large dataset tractable.
@@ -858,6 +876,7 @@ _CONFIGS = [
         keep_period=20_000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
+
     TrainConfig(
         # This config is for fine-tuning pi05 on the *full* DROID dataset.
         # We use RLDS data loading to make training on this large dataset tractable.
@@ -892,6 +911,7 @@ _CONFIGS = [
         keep_period=10_000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
+
     TrainConfig(
         # This config is for fine-tuning pi05-DROID on a custom (smaller) DROID dataset.
         # Here, we use LeRobot data format (like for all other fine-tuning examples)
@@ -916,9 +936,8 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=32,
     ),
-    #
+
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
-    #
     TrainConfig(
         name="pi0_aloha_sim",
         model=pi0_config.Pi0Config(),
@@ -930,9 +949,8 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=20_000,
     ),
-    #
+
     # Debugging configs.
-    #
     TrainConfig(
         name="debug",
         data=FakeDataConfig(),
@@ -944,6 +962,7 @@ _CONFIGS = [
         num_train_steps=10,
         wandb_enabled=False,
     ),
+
     TrainConfig(
         name="debug_restore",
         data=FakeDataConfig(),
@@ -955,6 +974,7 @@ _CONFIGS = [
         num_train_steps=10,
         wandb_enabled=False,
     ),
+
     TrainConfig(
         name="debug_pi05",
         model=pi0_config.Pi0Config(pi05=True, paligemma_variant="dummy", action_expert_variant="dummy"),

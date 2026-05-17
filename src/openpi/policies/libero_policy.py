@@ -40,6 +40,7 @@ class LiberoInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
+        print("[Zazzle] src/openpi/policies/libero_policy.py LiberoInputs")
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference.
         # Keep this for your own dataset, but if your dataset stores the images
@@ -79,7 +80,7 @@ class LiberoInputs(transforms.DataTransformFn):
         # stored in "prompt"; the output dict always needs to have the key "prompt").
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
-
+        print("[Zazzle] inputs: ", inputs)
         return inputs
 
 
@@ -93,8 +94,11 @@ class LiberoOutputs(transforms.DataTransformFn):
     """
 
     def __call__(self, data: dict) -> dict:
+        print("[Zazzle] src/openpi/policies/libero_policy.py LiberoOutputs")
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        outputs = {"actions": np.asarray(data["actions"][:, :7])}
+        print("[Zazzle] outpus: ", outputs)
+        return outputs

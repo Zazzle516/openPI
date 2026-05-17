@@ -190,6 +190,7 @@ class PI0Pytorch(nn.Module):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
         """
+        print("src/openpi/models_pytorch/pi0_pytorch.py embd_prefix")
         embs = []
         pad_masks = []
         att_masks = []
@@ -237,6 +238,7 @@ class PI0Pytorch(nn.Module):
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
+        print("src/openpi/models_pytorch/pi0_pytorch.py embed_suffix")
         embs = []
         pad_masks = []
         att_masks = []
@@ -376,6 +378,7 @@ class PI0Pytorch(nn.Module):
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        print("src/openpi/models_pytorch/pi0_pytorch.py sample_actions")
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)

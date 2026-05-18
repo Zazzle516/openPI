@@ -1,23 +1,112 @@
-Assuming your active `pi05_libero` config:
+# Model
 
-```python
-Pi0Config(
-    pi05=True,
-    action_horizon=10,
-    action_dim=32,
-    discrete_state_input=False,
-)
+## SigLIP
+
+### Pipeline
+
+输入: 3 个 [224, 224] 的图片，Channel = Main Camera + Right Hand + Left Hand = 3
+> Tip: Right Hand cound be empty
+
+**Unfold & Matmul**: (NHWC)
+
+- input_shape = [B, 224, 224, 3] => (view + permute) => [B, 16, 16, 14, 14, 3]
+- kernel_size = patch_size = 14 x 14
+- stride = 14
+- N = patches number of each pics = (224/14) x (224/14) = 256
+
+- unfold patch [B, 256, 14x14x3=588]
+- matmul: [B, 256, 588] x Weight [588, 1152] + bias [1152, ]
+- output_shape = [B, 256, 1152]
+
+**Position Embedding**
+
+- Look-Up Table: [N, 1152], Element-wise Addition
+
+**Transformer Block x 27**:
+
+- Block Input = [B, N, 1152]
+
+- Layer Norm for MHSA: [B, N, 1152] => [B, N, 1152]
+  
+- MHSA(Multi-Head Self Attention)
+  - num_heads = 16
+  - Attention Map = [B, Head_Dim, N, N]
+  - output_shape = [B, N, 1152]
+
+- Residual Addition: [B, N, 1152] => [B, N, 1152]
+
+- Layer Norm for MLP: [B, N, 1152] => [B, N, 1152]
+
+- MLP / FFN
+  - Linear: [B, 256, 1152] => [B, 256, 4304]
+  - GeLU
+  - Linear: [B, 256, 4304] => [B, 256, 1152]
+
+**Post Layer Norm**: [B, N, 1152] => [B, N, 1152]
+
+**End**
+
+
+### Diagram
+
+```mermaid
+graph TD
+    %% 定义样式
+    classDef input fill:#e1f5fe,stroke:#039be5,stroke-width:2px;
+    classDef embed fill:#fff3e0,stroke:#ffb300,stroke-width:2px;
+    classDef transformer fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
+    classDef pool fill:#e8f5e9,stroke:#43a047,stroke-width:2px;
+    classDef output fill:#ffebee,stroke:#e53935,stroke-width:2px;
+
+    %% 数据流
+    A[Input Image NHWC <br> Shape: B x 224 x 224 x 3]:::input --> B(Unfold into Patches <br> view + permute<br> patch_size=14, stride=14 <br> equals to B x 256 x 588):::embed
+
+    B --> C(Fused Patch Embedding + Position Embedding <br> matmul_small_bias_res_mod kernel <br>Output Shape: B x 256 x 1152):::embed
+
+    %% Transformer Blocks
+    subgraph SiglipEncoder [ViT-So400M: Transformer Block x 27]
+        direction TB
+        E1[Block Input: B x 256 x 1152] --> F1(LayerNorm)
+        F1 --> G1(Multi-Head Self Attention <br> Heads=16, HeadDim=72, Dim=1152)
+        G1 --> H1{Residual Add}
+        E1 --> H1
+
+        H1 --> I1(LayerNorm)
+        I1 --> J1(MLP / FFN <br> 1152 -> 4304 -> 1152, Act=GELU)
+        J1 --> K1{Residual Add}
+        H1 --> K1
+    end
+
+    C --> SiglipEncoder:::transformer
+
+    %% 输出
+    SiglipEncoder --> L(Final LayerNorm <br> vision_final_norm <br> Output Shape: B x 256 x 1152):::pool
+    L --> M(Multi-Modal Projector <br> Linear: 1152 -> 2048 + bias <br> Output Shape: B x 256 x 2048):::pool
+    M --> N[Vision Embeddings keep all 256 patch token <br> Output Shape: B x 256 x 2048]:::output
 ```
 
-Default variants are:
+### Operators Involved
 
-```text
-PaliGemma expert: gemma_2b    width=2048, depth=18, mlp_dim=16384
-Action expert:   gemma_300m  width=1024, depth=18, mlp_dim=4096
-Vision encoder:  SigLIP So400m/14, width=1152, depth=27, mlp_dim=4304
-```
+matmul
 
-Your current [pi0.py](/home/zazzle/openpi/src/openpi/models/pi0.py:66) is locally edited to be PI05-oriented: it always creates `time_mlp_in/out`, and `compute_loss()` is currently `pass`.
+Element-Wise: add, sub, mul, div
+
+exp, rsqrt, sigmoid
+
+reduce-sum, reduce-max (归约求最大值)
+
+load, store
+
+cast(bf16↔fp32)
+
+index-compute, mask
+
+
+## Gemma2
+
+
+
+## Overview
 
 ```mermaid
 flowchart TD
@@ -52,83 +141,4 @@ flowchart TD
     K --> L["action_out_proj<br/>1024 -> 32<br/>v_t [B,10,32]"]
     L --> M["Euler denoise step<br/>x_t = x_t + dt * v_t<br/>repeat num_steps=10"]
     M --> N["Predicted normalized action chunk<br/>[B,10,32]"]
-```
-
-Inside the **18 Gemma blocks** from [gemma.py](/home/zazzle/openpi/src/openpi/models/gemma.py:284), each layer has two streams:
-
-```text
-Expert 0: PaliGemma/image-language stream
-tokens: [B, prefix_len, 2048]
-
-Expert 1: action stream
-tokens: [B, action_horizon, 1024]
-```
-
-Each block does:
-
-```text
-RMSNorm / adaRMSNorm
--> multi-head attention over concatenated prefix + action tokens
--> residual
--> RMSNorm / adaRMSNorm
--> gated MLP
--> residual
-```
-
-Attention details from [gemma.py:157](/home/zazzle/openpi/src/openpi/models/gemma.py:157):
-
-```text
-num_heads = 8
-num_kv_heads = 1
-head_dim = 256
-
-Query shape per stream:
-PaliGemma: [B,T,8,256]
-Action:    [B,T,8,256]
-
-K/V shape per stream:
-PaliGemma: [B,T,1,256]
-Action:    [B,T,1,256]
-```
-
-The streams have different hidden widths, but attention projects both into the same head space, concatenates along token length, attends jointly, then projects back to each stream’s own width.
-
-The Gemma MLP from [lora.py:88](/home/zazzle/openpi/src/openpi/models/lora.py:88) is a gated GeLU MLP:
-
-```text
-x -> Linear(features -> hidden_dim) -> GeLU
-x -> Linear(features -> hidden_dim)
-multiply both branches
--> Linear(hidden_dim -> features)
-```
-
-So per block:
-
-```text
-PaliGemma MLP: 2048 -> 16384 -> 2048, GeLU gate
-Action MLP:    1024 -> 4096  -> 1024, GeLU gate
-```
-
-For PI05 specifically, the action expert uses **adaRMSNorm**. The timestep MLP produces `adarms_cond: [B,1024]`, and each action-expert RMSNorm creates:
-
-```text
-scale, shift, gate = Dense(1024 -> 3*1024)(adarms_cond)
-```
-
-That gate modulates the residual:
-
-```python
-x + y * gate
-```
-
-So the short architecture summary is:
-
-```text
-3 RGB views -> SigLIP So400m/14 -> 768 visual tokens of dim 2048
-prompt -> PaliGemma embedder -> 200 language tokens of dim 2048
-actions/noise -> Linear -> 10 action tokens of dim 1024
-timestep -> sincos -> 2-layer swish MLP -> adaRMS conditioning
-18 two-expert Gemma layers -> action hidden states
-Linear 1024->32 -> denoising velocity
-10 denoising steps -> [10,32] normalized action chunk
 ```
